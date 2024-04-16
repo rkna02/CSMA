@@ -1,8 +1,8 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
-#include <algorithm>
-#include <cmath>
+#include <sstream>
+#include <string>
 
 struct Node {
     int id;
@@ -12,9 +12,9 @@ struct Node {
     int transmissionEndTime;
 };
 
-// Function to calculate the backoff using the pseudorandom number generator
-int calculateBackoff(int nodeId, int ticks, int R) {
-    return (nodeId + ticks) % R;
+// Function to calculate the initial backoff using the provided formula
+int calculateInitialBackoff(int nodeId, int R) {
+    return nodeId % R;
 }
 
 int main(int argc, char* argv[]) {
@@ -34,94 +34,68 @@ int main(int argc, char* argv[]) {
     char param;
     int R;
 
-    // Read input parameters
-    while (inputFile >> param) {
-        switch (param) {
-            case 'N':
-                inputFile >> N;
-                break;
-            case 'L':
-                inputFile >> L;
-                break;
-            case 'M':
-                inputFile >> M;
-                break;
-            case 'R':
-                while (inputFile >> R) {
-                    R_values.push_back(R);
-                    if (inputFile.peek() == '\n') break;
-                }
-                break;
-            case 'T':
-                inputFile >> T;
-                break;
-            default:
-                std::cerr << "Unknown parameter: " << param << std::endl;
-                return 1;
+    while (inputFile >> param && inputFile >> std::ws) {
+        if (param == 'N' || param == 'L' || param == 'M' || param == 'T') {
+            inputFile >> (param == 'N' ? N : param == 'L' ? L : param == 'M' ? M : T);
+        } else if (param == 'R') {
+            while (inputFile >> R) {
+                R_values.push_back(R);
+                if (inputFile.peek() == '\n' || inputFile.eof()) break;
+            }
         }
     }
-    inputFile.close(); // Close the file after reading
+    inputFile.close();
 
     std::vector<Node> nodes(N);
     int successfulTransmissionTicks = 0;
+    bool channelBusy = false;
 
-    // Initialize nodes
     for (int i = 0; i < N; i++) {
         nodes[i].id = i;
-        nodes[i].backoff = calculateBackoff(i, 0, R_values[0]);
+        nodes[i].backoff = calculateInitialBackoff(i, R_values[0]);
         nodes[i].collisionCount = 0;
         nodes[i].isTransmitting = false;
         nodes[i].transmissionEndTime = -1;
     }
 
-    // Simulation loop
-    for (int globalTime = 0; globalTime < T; ++globalTime) {
+    for (int time = 0; time < T; ++time) {
         std::vector<int> readyNodes;
-        
-        // Decrease backoff and collect ready nodes
-        for (auto& node : nodes) {
-            if (!node.isTransmitting && node.transmissionEndTime <= globalTime) {
-                if (node.backoff == 0) {
-                    readyNodes.push_back(node.id);
-                } else {
-                    node.backoff--;
-                }
+        for (Node& node : nodes) {
+            if (node.isTransmitting && time == node.transmissionEndTime) {
+                node.isTransmitting = false;
+                channelBusy = false;
+            } else if (!node.isTransmitting && node.backoff == 0 && !channelBusy) {
+                readyNodes.push_back(node.id);
+            } else if (!node.isTransmitting && !channelBusy) {
+                node.backoff--;
             }
         }
 
-        // Check for transmission or collision
-        if (readyNodes.size() == 1) {
-            // Successful transmission
+        if (readyNodes.size() == 1 && !channelBusy) {
             int nodeId = readyNodes.front();
             nodes[nodeId].isTransmitting = true;
-            nodes[nodeId].transmissionEndTime = globalTime + L;
-            successfulTransmissionTicks += L; // Count successful transmission ticks
+            nodes[nodeId].transmissionEndTime = time + L;
+            successfulTransmissionTicks++; // Increment for each successful transmission start
+            channelBusy = true;
         } else if (readyNodes.size() > 1) {
-            // Collision handling
             for (int id : readyNodes) {
                 Node& node = nodes[id];
                 node.collisionCount++;
-                int R_index = std::min(node.collisionCount, (int)R_values.size()) - 1;
-                node.backoff = calculateBackoff(id, globalTime, R_values[R_index]);
-            }
-        }
-
-        // Check for end of transmission
-        for (auto& node : nodes) {
-            if (node.isTransmitting && globalTime >= node.transmissionEndTime) {
-                node.isTransmitting = false;
-                node.collisionCount = 0;
-                node.backoff = calculateBackoff(node.id, globalTime, R_values[0]);
+                if (node.collisionCount > M) {
+                    node.collisionCount = 0;
+                    node.backoff = calculateInitialBackoff(id, R_values[0]);
+                } else {
+                    int currentRIndex = std::min(node.collisionCount - 1, (int)R_values.size() - 1);
+                    node.backoff = calculateInitialBackoff(id, R_values[currentRIndex]);
+                }
             }
         }
     }
 
-    // Calculate the utilization rate
-    double utilizationRate = static_cast<double>(successfulTransmissionTicks) / T;
+    double utilizationRate = (double)successfulTransmissionTicks / T;
 
-    // Write the utilization rate to an output file
     std::ofstream outputFile("output.txt");
-    if (outputFile.is_open()) {
+    if (outputFile) {
         outputFile.precision(2);
         outputFile << std::fixed << utilizationRate << std::endl;
         outputFile.close();
@@ -132,3 +106,9 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
+
+
+
+
+
+
